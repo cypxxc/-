@@ -79,8 +79,6 @@ export function ThailandMap({
     const effectiveScale = s.currentZoomMultiplier * BASE_RATIO;
     transformLayerRef.current.style.transform = `translate3d(${s.currentX}px, ${s.currentY}px, 0) scale(${effectiveScale})`;
 
-    // Dynamically adjust icon scale factor so pins never balloon up when zoomed in
-    // Formula: inverse scale dampened so it stays comfortable and never blocks the province
     if (iconLayerRef.current) {
       const invScale = Math.min(1.1, Math.max(0.38, 1 / Math.pow(s.currentZoomMultiplier, 0.72)));
       iconLayerRef.current.style.setProperty("--pin-scale", invScale.toFixed(3));
@@ -102,34 +100,45 @@ export function ThailandMap({
     }
   }, [renderFrame]);
 
-  // Smooth Wheel Zoom Focal Point
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
+  // Non-passive Wheel Zoom with Focal Point
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
 
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left - rect.width / 2;
-    const mouseY = e.clientY - rect.top - rect.height / 2;
+    const onWheelNonPassive = (e: WheelEvent) => {
+      e.preventDefault(); // Safely prevent default inside non-passive listener
 
-    const s = stateRef.current;
-    const rawDelta = e.deltaY;
-    const delta = Math.max(-100, Math.min(100, rawDelta));
-    const factor = Math.pow(0.9985, delta);
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left - rect.width / 2;
+      const mouseY = e.clientY - rect.top - rect.height / 2;
 
-    const oldZoom = s.targetZoomMultiplier;
-    const newZoom = Math.min(Math.max(oldZoom * factor, MIN_ZOOM), MAX_ZOOM);
-    if (newZoom === oldZoom) return;
+      const s = stateRef.current;
+      const rawDelta = e.deltaY;
+      const delta = Math.max(-100, Math.min(100, rawDelta));
+      const factor = Math.pow(0.9985, delta);
 
-    const scaleRatio = newZoom / oldZoom;
-    s.targetX = mouseX - (mouseX - s.targetX) * scaleRatio;
-    s.targetY = mouseY - (mouseY - s.targetY) * scaleRatio;
-    s.targetZoomMultiplier = newZoom;
+      const oldZoom = s.targetZoomMultiplier;
+      const newZoom = Math.min(Math.max(oldZoom * factor, MIN_ZOOM), MAX_ZOOM);
+      if (newZoom === oldZoom) return;
 
-    s.targetX = Math.max(-1200, Math.min(1200, s.targetX));
-    s.targetY = Math.max(-1400, Math.min(1400, s.targetY));
+      const scaleRatio = newZoom / oldZoom;
+      s.targetX = mouseX - (mouseX - s.targetX) * scaleRatio;
+      s.targetY = mouseY - (mouseY - s.targetY) * scaleRatio;
+      s.targetZoomMultiplier = newZoom;
 
-    triggerAnimation();
-  };
+      s.targetX = Math.max(-1200, Math.min(1200, s.targetX));
+      s.targetY = Math.max(-1400, Math.min(1400, s.targetY));
+
+      triggerAnimation();
+    };
+
+    // Attach with passive: false to allow e.preventDefault()
+    el.addEventListener("wheel", onWheelNonPassive, { passive: false });
+
+    return () => {
+      el.removeEventListener("wheel", onWheelNonPassive);
+    };
+  }, [triggerAnimation]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -221,7 +230,6 @@ export function ThailandMap({
     <div
       ref={containerRef}
       className="absolute inset-0 w-full h-full select-none overflow-hidden bg-[#04060b] cursor-grab active:cursor-grabbing"
-      onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -384,7 +392,7 @@ export function ThailandMap({
             })}
           </g>
 
-          {/* Layer 2: Signature Province Landmark Icons & Badges with Smart CSS Variable Scaling */}
+          {/* Layer 2: Signature Province Landmark Icons & Badges */}
           <g ref={iconLayerRef} className="pointer-events-none" style={{ "--pin-scale": "1" } as React.CSSProperties}>
             {provinces.map((prov) => {
               if (!prov.centroid) return null;
