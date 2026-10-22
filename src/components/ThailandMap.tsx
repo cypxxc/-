@@ -14,7 +14,7 @@ interface ThailandMapProps {
 
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 6;
-const LERP = 0.2;
+const LERP = 0.22;
 
 export function ThailandMap({
   provinces,
@@ -26,6 +26,7 @@ export function ThailandMap({
   const [hoveredProvince, setHoveredProvince] = useState<ProvinceData | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const transformLayerRef = useRef<HTMLDivElement | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const zoomDisplayRef = useRef<HTMLSpanElement | null>(null);
@@ -50,7 +51,7 @@ export function ThailandMap({
 
   const mouseRafId = useRef<number | null>(null);
 
-  // High Performance 120 FPS GPU Render Loop
+  // Smooth Hardware Animation Loop
   const renderFrame = useCallback(() => {
     const s = stateRef.current;
     if (!transformLayerRef.current) return;
@@ -311,18 +312,23 @@ export function ThailandMap({
         </span>
       </div>
 
-      {/* Single Unified GPU Transform Layer - Map and Icons 100% Locked Together */}
+      {/* Unified GPU Transform Layer with SVG Rasterization Sharpness */}
       <div
         ref={transformLayerRef}
-        className="w-full h-full flex items-center justify-center origin-center pointer-events-none will-change-transform"
+        className="w-full h-full flex items-center justify-center origin-center pointer-events-none"
         style={{
           transform: "translate3d(0px, 15px, 0) scale(1)",
         }}
       >
         <svg
+          ref={svgRef}
           viewBox="0 0 600 900"
           shapeRendering="geometricPrecision"
-          style={{ touchAction: "none" }}
+          textRendering="geometricPrecision"
+          style={{
+            touchAction: "none",
+            transform: "translateZ(0)",
+          }}
           className="w-full h-full max-h-[90vh] select-none pointer-events-auto"
         >
           {/* Layer 1: Province Polygons */}
@@ -376,7 +382,7 @@ export function ThailandMap({
             })}
           </g>
 
-          {/* Layer 2: Signature Province Landmark Icons & Badges - Perfectly Native Centered */}
+          {/* Layer 2: Signature Province Landmark Icons & Badges */}
           <g className="pointer-events-none">
             {provinces.map((prov) => {
               if (!prov.centroid) return null;
