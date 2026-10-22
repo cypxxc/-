@@ -14,7 +14,6 @@ interface ThailandMapProps {
 
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 6;
-const LERP = 0.22;
 
 export function ThailandMap({
   provinces,
@@ -26,72 +25,47 @@ export function ThailandMap({
   const [hoveredProvince, setHoveredProvince] = useState<ProvinceData | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
   const transformLayerRef = useRef<HTMLDivElement | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const zoomDisplayRef = useRef<HTMLSpanElement | null>(null);
 
-  // Transform physics state
+  // Interaction State - Pure Native Performance
   const stateRef = useRef({
-    targetScale: 1,
-    targetX: 0,
-    targetY: 15,
-
-    currentScale: 1,
-    currentX: 0,
-    currentY: 15,
+    scale: 1,
+    x: 0,
+    y: 15,
 
     isDragging: false,
     dragStartMouse: { x: 0, y: 0 },
     dragStartPos: { x: 0, y: 15 },
     hasMoved: false,
 
-    animating: false,
+    rafId: null as number | null,
+    motionTimeout: null as NodeJS.Timeout | null,
   });
 
   const mouseRafId = useRef<number | null>(null);
 
-  // Smooth Hardware Animation Loop
-  const renderFrame = useCallback(() => {
+  // Ultra-fast Direct Transform Application
+  const applyTransform = useCallback((inMotion: boolean = false) => {
     const s = stateRef.current;
     if (!transformLayerRef.current) return;
 
-    const ds = s.targetScale - s.currentScale;
-    const dx = s.targetX - s.currentX;
-    const dy = s.targetY - s.currentY;
+    // During motion: lightweight GPU transform
+    transformLayerRef.current.style.transform = `translate3d(${s.x}px, ${s.y}px, 0) scale(${s.scale})`;
 
-    if (Math.abs(ds) > 0.001 || Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
-      s.currentScale += ds * LERP;
-      s.currentX += dx * LERP;
-      s.currentY += dy * LERP;
-      s.animating = true;
+    if (inMotion) {
+      transformLayerRef.current.classList.add("pointer-events-none");
     } else {
-      s.currentScale = s.targetScale;
-      s.currentX = s.targetX;
-      s.currentY = s.targetY;
-      s.animating = false;
+      transformLayerRef.current.classList.remove("pointer-events-none");
     }
-
-    // Direct GPU Transform - lightweight, 0% CPU overhead
-    transformLayerRef.current.style.transform = `translate3d(${s.currentX}px, ${s.currentY}px, 0) scale(${s.currentScale})`;
 
     if (zoomDisplayRef.current) {
-      zoomDisplayRef.current.textContent = `${Math.round(s.currentScale * 100)}%`;
-    }
-
-    if (s.animating) {
-      requestAnimationFrame(renderFrame);
+      zoomDisplayRef.current.textContent = `${Math.round(s.scale * 100)}%`;
     }
   }, []);
 
-  const triggerAnimation = useCallback(() => {
-    if (!stateRef.current.animating) {
-      stateRef.current.animating = true;
-      requestAnimationFrame(renderFrame);
-    }
-  }, [renderFrame]);
-
-  // Non-passive Wheel Zoom with Focal Point
+  // Wheel Zoom with Direct High-Performance Transform
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -105,29 +79,35 @@ export function ThailandMap({
 
       const s = stateRef.current;
       const delta = Math.max(-100, Math.min(100, e.deltaY));
-      const factor = Math.pow(0.9985, delta);
+      const factor = delta < 0 ? 1.12 : 0.89; // Snappy crisp zoom increments
 
-      const oldScale = s.targetScale;
+      const oldScale = s.scale;
       const newScale = Math.min(Math.max(oldScale * factor, MIN_ZOOM), MAX_ZOOM);
       if (newScale === oldScale) return;
 
       const scaleRatio = newScale / oldScale;
-      s.targetX = mouseX - (mouseX - s.targetX) * scaleRatio;
-      s.targetY = mouseY - (mouseY - s.targetY) * scaleRatio;
-      s.targetScale = newScale;
+      s.x = mouseX - (mouseX - s.x) * scaleRatio;
+      s.y = mouseY - (mouseY - s.y) * scaleRatio;
+      s.scale = newScale;
 
       // Safe bounds
-      s.targetX = Math.max(-800, Math.min(800, s.targetX));
-      s.targetY = Math.max(-1000, Math.min(1000, s.targetY));
+      s.x = Math.max(-800, Math.min(800, s.x));
+      s.y = Math.max(-1000, Math.min(1000, s.y));
 
-      triggerAnimation();
+      applyTransform(true);
+
+      // Settle motion after 100ms
+      if (s.motionTimeout) clearTimeout(s.motionTimeout);
+      s.motionTimeout = setTimeout(() => {
+        applyTransform(false);
+      }, 100);
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       el.removeEventListener("wheel", onWheel);
     };
-  }, [triggerAnimation]);
+  }, [applyTransform]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -135,7 +115,7 @@ export function ThailandMap({
     s.isDragging = true;
     s.hasMoved = false;
     s.dragStartMouse = { x: e.clientX, y: e.clientY };
-    s.dragStartPos = { x: s.targetX, y: s.targetY };
+    s.dragStartPos = { x: s.x, y: s.y };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -143,7 +123,7 @@ export function ThailandMap({
     const clientY = e.clientY;
     const s = stateRef.current;
 
-    // Smooth cursor spotlight
+    // Spotlight cursor update
     if (mouseRafId.current) cancelAnimationFrame(mouseRafId.current);
     mouseRafId.current = requestAnimationFrame(() => {
       if (spotlightRef.current && containerRef.current) {
@@ -161,38 +141,36 @@ export function ThailandMap({
       s.hasMoved = true;
     }
 
-    s.targetX = s.dragStartPos.x + dx;
-    s.targetY = s.dragStartPos.y + dy;
-    s.currentX = s.targetX;
-    s.currentY = s.targetY;
+    s.x = s.dragStartPos.x + dx;
+    s.y = s.dragStartPos.y + dy;
 
-    if (transformLayerRef.current) {
-      transformLayerRef.current.style.transform = `translate3d(${s.targetX}px, ${s.targetY}px, 0) scale(${s.currentScale})`;
-    }
+    applyTransform(true);
   };
 
   const handleMouseUp = () => {
-    stateRef.current.isDragging = false;
+    const s = stateRef.current;
+    s.isDragging = false;
+    applyTransform(false);
   };
 
   const zoomIn = () => {
     const s = stateRef.current;
-    s.targetScale = Math.min(s.targetScale * 1.35, MAX_ZOOM);
-    triggerAnimation();
+    s.scale = Math.min(s.scale * 1.3, MAX_ZOOM);
+    applyTransform(false);
   };
 
   const zoomOut = () => {
     const s = stateRef.current;
-    s.targetScale = Math.max(s.targetScale * 0.74, MIN_ZOOM);
-    triggerAnimation();
+    s.scale = Math.max(s.scale * 0.76, MIN_ZOOM);
+    applyTransform(false);
   };
 
   const resetTransform = () => {
     const s = stateRef.current;
-    s.targetX = 0;
-    s.targetY = 15;
-    s.targetScale = 1;
-    triggerAnimation();
+    s.x = 0;
+    s.y = 15;
+    s.scale = 1;
+    applyTransform(false);
   };
 
   useEffect(() => {
@@ -312,22 +290,18 @@ export function ThailandMap({
         </span>
       </div>
 
-      {/* Unified GPU Transform Layer with SVG Rasterization Sharpness */}
+      {/* Unified Vector Map Stage */}
       <div
         ref={transformLayerRef}
-        className="w-full h-full flex items-center justify-center origin-center pointer-events-none"
+        className="w-full h-full flex items-center justify-center origin-center pointer-events-none transition-transform duration-75 ease-out"
         style={{
           transform: "translate3d(0px, 15px, 0) scale(1)",
         }}
       >
         <svg
-          ref={svgRef}
           viewBox="0 0 600 900"
-          shapeRendering="geometricPrecision"
-          textRendering="geometricPrecision"
           style={{
             touchAction: "none",
-            transform: "translateZ(0)",
           }}
           className="w-full h-full max-h-[90vh] select-none pointer-events-auto"
         >
