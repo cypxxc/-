@@ -40,24 +40,23 @@ export function ThailandMap({
     dragStartPos: { x: 0, y: 15 },
     hasMoved: false,
 
-    rafId: null as number | null,
+    wheelRafId: null as number | null,
     motionTimeout: null as NodeJS.Timeout | null,
   });
 
   const mouseRafId = useRef<number | null>(null);
 
-  // Ultra-fast Direct Transform Application
+  // Instant zero-conflict transform (No CSS transition fight)
   const applyTransform = useCallback((inMotion: boolean = false) => {
     const s = stateRef.current;
     if (!transformLayerRef.current) return;
 
-    // During motion: lightweight GPU transform
     transformLayerRef.current.style.transform = `translate3d(${s.x}px, ${s.y}px, 0) scale(${s.scale})`;
 
     if (inMotion) {
-      transformLayerRef.current.classList.add("pointer-events-none");
+      transformLayerRef.current.style.pointerEvents = "none";
     } else {
-      transformLayerRef.current.classList.remove("pointer-events-none");
+      transformLayerRef.current.style.pointerEvents = "auto";
     }
 
     if (zoomDisplayRef.current) {
@@ -65,7 +64,7 @@ export function ThailandMap({
     }
   }, []);
 
-  // Wheel Zoom with Direct High-Performance Transform
+  // Frame-Paced Smooth Wheel Zoom with requestAnimationFrame
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -73,39 +72,45 @@ export function ThailandMap({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      const rect = el.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left - rect.width / 2;
-      const mouseY = e.clientY - rect.top - rect.height / 2;
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      const rawDelta = e.deltaY;
 
       const s = stateRef.current;
-      const delta = Math.max(-100, Math.min(100, e.deltaY));
-      const factor = delta < 0 ? 1.12 : 0.89; // Snappy crisp zoom increments
+      if (s.wheelRafId) cancelAnimationFrame(s.wheelRafId);
 
-      const oldScale = s.scale;
-      const newScale = Math.min(Math.max(oldScale * factor, MIN_ZOOM), MAX_ZOOM);
-      if (newScale === oldScale) return;
+      s.wheelRafId = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        const mouseX = clientX - rect.left - rect.width / 2;
+        const mouseY = clientY - rect.top - rect.height / 2;
 
-      const scaleRatio = newScale / oldScale;
-      s.x = mouseX - (mouseX - s.x) * scaleRatio;
-      s.y = mouseY - (mouseY - s.y) * scaleRatio;
-      s.scale = newScale;
+        const factor = rawDelta < 0 ? 1.10 : 0.90; // Natural proportional zoom
+        const oldScale = s.scale;
+        const newScale = Math.min(Math.max(oldScale * factor, MIN_ZOOM), MAX_ZOOM);
+        if (newScale === oldScale) return;
 
-      // Safe bounds
-      s.x = Math.max(-800, Math.min(800, s.x));
-      s.y = Math.max(-1000, Math.min(1000, s.y));
+        const scaleRatio = newScale / oldScale;
+        s.x = mouseX - (mouseX - s.x) * scaleRatio;
+        s.y = mouseY - (mouseY - s.y) * scaleRatio;
+        s.scale = newScale;
 
-      applyTransform(true);
+        // Bounding limits
+        s.x = Math.max(-800, Math.min(800, s.x));
+        s.y = Math.max(-1000, Math.min(1000, s.y));
 
-      // Settle motion after 100ms
-      if (s.motionTimeout) clearTimeout(s.motionTimeout);
-      s.motionTimeout = setTimeout(() => {
-        applyTransform(false);
-      }, 100);
+        applyTransform(true);
+
+        if (s.motionTimeout) clearTimeout(s.motionTimeout);
+        s.motionTimeout = setTimeout(() => {
+          applyTransform(false);
+        }, 80);
+      });
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       el.removeEventListener("wheel", onWheel);
+      if (stateRef.current.wheelRafId) cancelAnimationFrame(stateRef.current.wheelRafId);
     };
   }, [applyTransform]);
 
@@ -199,7 +204,7 @@ export function ThailandMap({
       {/* 1. Hardware Accelerated Spotlight */}
       <div
         ref={spotlightRef}
-        className="absolute top-0 left-0 w-[800px] h-[800px] rounded-full pointer-events-none transition-[background] duration-200 ease-out will-change-transform"
+        className="absolute top-0 left-0 w-[800px] h-[800px] rounded-full pointer-events-none will-change-transform"
         style={{
           background: spotlightColor,
           transform: "translate3d(-200px, -200px, 0)",
@@ -290,10 +295,10 @@ export function ThailandMap({
         </span>
       </div>
 
-      {/* Unified Vector Map Stage */}
+      {/* Pure Direct GPU Transform Layer - Zero CSS Delay */}
       <div
         ref={transformLayerRef}
-        className="w-full h-full flex items-center justify-center origin-center pointer-events-none transition-transform duration-75 ease-out"
+        className="w-full h-full flex items-center justify-center origin-center pointer-events-none will-change-transform"
         style={{
           transform: "translate3d(0px, 15px, 0) scale(1)",
         }}
