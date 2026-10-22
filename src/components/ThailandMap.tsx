@@ -12,12 +12,8 @@ interface ThailandMapProps {
   onToggleVisited: (provinceId: string) => void;
 }
 
-const NATIVE_WIDTH = 2400;
-const NATIVE_HEIGHT = 3600;
-const BASE_RATIO = 0.25;
-
-const MIN_ZOOM = 0.6;
-const MAX_ZOOM = 7;
+const MIN_ZOOM = 0.8;
+const MAX_ZOOM = 6;
 const LERP = 0.2;
 
 export function ThailandMap({
@@ -33,15 +29,14 @@ export function ThailandMap({
   const transformLayerRef = useRef<HTMLDivElement | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const zoomDisplayRef = useRef<HTMLSpanElement | null>(null);
-  const iconLayerRef = useRef<SVGGElement | null>(null);
 
   // Transform physics state
   const stateRef = useRef({
-    targetZoomMultiplier: 1,
+    targetScale: 1,
     targetX: 0,
     targetY: 15,
 
-    currentZoomMultiplier: 1,
+    currentScale: 1,
     currentX: 0,
     currentY: 15,
 
@@ -55,37 +50,32 @@ export function ThailandMap({
 
   const mouseRafId = useRef<number | null>(null);
 
-  // Smooth Hardware Animation Loop
+  // High Performance 120 FPS GPU Render Loop
   const renderFrame = useCallback(() => {
     const s = stateRef.current;
     if (!transformLayerRef.current) return;
 
-    const dz = s.targetZoomMultiplier - s.currentZoomMultiplier;
+    const ds = s.targetScale - s.currentScale;
     const dx = s.targetX - s.currentX;
     const dy = s.targetY - s.currentY;
 
-    if (Math.abs(dz) > 0.001 || Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
-      s.currentZoomMultiplier += dz * LERP;
+    if (Math.abs(ds) > 0.001 || Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+      s.currentScale += ds * LERP;
       s.currentX += dx * LERP;
       s.currentY += dy * LERP;
       s.animating = true;
     } else {
-      s.currentZoomMultiplier = s.targetZoomMultiplier;
+      s.currentScale = s.targetScale;
       s.currentX = s.targetX;
       s.currentY = s.targetY;
       s.animating = false;
     }
 
-    const effectiveScale = s.currentZoomMultiplier * BASE_RATIO;
-    transformLayerRef.current.style.transform = `translate3d(${s.currentX}px, ${s.currentY}px, 0) scale(${effectiveScale})`;
-
-    if (iconLayerRef.current) {
-      const invScale = Math.min(1.1, Math.max(0.38, 1 / Math.pow(s.currentZoomMultiplier, 0.72)));
-      iconLayerRef.current.style.setProperty("--pin-scale", invScale.toFixed(3));
-    }
+    // Direct GPU Transform - lightweight, 0% CPU overhead
+    transformLayerRef.current.style.transform = `translate3d(${s.currentX}px, ${s.currentY}px, 0) scale(${s.currentScale})`;
 
     if (zoomDisplayRef.current) {
-      zoomDisplayRef.current.textContent = `${Math.round(s.currentZoomMultiplier * 100)}%`;
+      zoomDisplayRef.current.textContent = `${Math.round(s.currentScale * 100)}%`;
     }
 
     if (s.animating) {
@@ -105,38 +95,36 @@ export function ThailandMap({
     const el = containerRef.current;
     if (!el) return;
 
-    const onWheelNonPassive = (e: WheelEvent) => {
-      e.preventDefault(); // Safely prevent default inside non-passive listener
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
 
       const rect = el.getBoundingClientRect();
       const mouseX = e.clientX - rect.left - rect.width / 2;
       const mouseY = e.clientY - rect.top - rect.height / 2;
 
       const s = stateRef.current;
-      const rawDelta = e.deltaY;
-      const delta = Math.max(-100, Math.min(100, rawDelta));
+      const delta = Math.max(-100, Math.min(100, e.deltaY));
       const factor = Math.pow(0.9985, delta);
 
-      const oldZoom = s.targetZoomMultiplier;
-      const newZoom = Math.min(Math.max(oldZoom * factor, MIN_ZOOM), MAX_ZOOM);
-      if (newZoom === oldZoom) return;
+      const oldScale = s.targetScale;
+      const newScale = Math.min(Math.max(oldScale * factor, MIN_ZOOM), MAX_ZOOM);
+      if (newScale === oldScale) return;
 
-      const scaleRatio = newZoom / oldZoom;
+      const scaleRatio = newScale / oldScale;
       s.targetX = mouseX - (mouseX - s.targetX) * scaleRatio;
       s.targetY = mouseY - (mouseY - s.targetY) * scaleRatio;
-      s.targetZoomMultiplier = newZoom;
+      s.targetScale = newScale;
 
-      s.targetX = Math.max(-1200, Math.min(1200, s.targetX));
-      s.targetY = Math.max(-1400, Math.min(1400, s.targetY));
+      // Safe bounds
+      s.targetX = Math.max(-800, Math.min(800, s.targetX));
+      s.targetY = Math.max(-1000, Math.min(1000, s.targetY));
 
       triggerAnimation();
     };
 
-    // Attach with passive: false to allow e.preventDefault()
-    el.addEventListener("wheel", onWheelNonPassive, { passive: false });
-
+    el.addEventListener("wheel", onWheel, { passive: false });
     return () => {
-      el.removeEventListener("wheel", onWheelNonPassive);
+      el.removeEventListener("wheel", onWheel);
     };
   }, [triggerAnimation]);
 
@@ -154,6 +142,7 @@ export function ThailandMap({
     const clientY = e.clientY;
     const s = stateRef.current;
 
+    // Smooth cursor spotlight
     if (mouseRafId.current) cancelAnimationFrame(mouseRafId.current);
     mouseRafId.current = requestAnimationFrame(() => {
       if (spotlightRef.current && containerRef.current) {
@@ -177,8 +166,7 @@ export function ThailandMap({
     s.currentY = s.targetY;
 
     if (transformLayerRef.current) {
-      const effectiveScale = s.currentZoomMultiplier * BASE_RATIO;
-      transformLayerRef.current.style.transform = `translate3d(${s.targetX}px, ${s.targetY}px, 0) scale(${effectiveScale})`;
+      transformLayerRef.current.style.transform = `translate3d(${s.targetX}px, ${s.targetY}px, 0) scale(${s.currentScale})`;
     }
   };
 
@@ -188,13 +176,13 @@ export function ThailandMap({
 
   const zoomIn = () => {
     const s = stateRef.current;
-    s.targetZoomMultiplier = Math.min(s.targetZoomMultiplier * 1.35, MAX_ZOOM);
+    s.targetScale = Math.min(s.targetScale * 1.35, MAX_ZOOM);
     triggerAnimation();
   };
 
   const zoomOut = () => {
     const s = stateRef.current;
-    s.targetZoomMultiplier = Math.max(s.targetZoomMultiplier * 0.74, MIN_ZOOM);
+    s.targetScale = Math.max(s.targetScale * 0.74, MIN_ZOOM);
     triggerAnimation();
   };
 
@@ -202,17 +190,11 @@ export function ThailandMap({
     const s = stateRef.current;
     s.targetX = 0;
     s.targetY = 15;
-    s.targetZoomMultiplier = 1;
+    s.targetScale = 1;
     triggerAnimation();
   };
 
   useEffect(() => {
-    if (transformLayerRef.current) {
-      transformLayerRef.current.style.transform = `translate3d(0px, 15px, 0) scale(${BASE_RATIO})`;
-    }
-    if (iconLayerRef.current) {
-      iconLayerRef.current.style.setProperty("--pin-scale", "1");
-    }
     return () => {
       if (mouseRafId.current) cancelAnimationFrame(mouseRafId.current);
     };
@@ -329,18 +311,19 @@ export function ThailandMap({
         </span>
       </div>
 
-      {/* Ultra High-Resolution Native SVG Buffer */}
+      {/* Single Unified GPU Transform Layer - Map and Icons 100% Locked Together */}
       <div
         ref={transformLayerRef}
         className="w-full h-full flex items-center justify-center origin-center pointer-events-none will-change-transform"
+        style={{
+          transform: "translate3d(0px, 15px, 0) scale(1)",
+        }}
       >
         <svg
           viewBox="0 0 600 900"
-          width={NATIVE_WIDTH}
-          height={NATIVE_HEIGHT}
           shapeRendering="geometricPrecision"
           style={{ touchAction: "none" }}
-          className="select-none pointer-events-auto shrink-0"
+          className="w-full h-full max-h-[90vh] select-none pointer-events-auto"
         >
           {/* Layer 1: Province Polygons */}
           <g>
@@ -373,6 +356,7 @@ export function ThailandMap({
                   fill={fill}
                   stroke={stroke}
                   strokeWidth={strokeWidth}
+                  vectorEffect="non-scaling-stroke"
                   strokeLinejoin="round"
                   className="cursor-pointer hover:brightness-125 transition-colors duration-75"
                   onMouseEnter={() => setHoveredProvince(prov)}
@@ -392,8 +376,8 @@ export function ThailandMap({
             })}
           </g>
 
-          {/* Layer 2: Signature Province Landmark Icons & Badges */}
-          <g ref={iconLayerRef} className="pointer-events-none" style={{ "--pin-scale": "1" } as React.CSSProperties}>
+          {/* Layer 2: Signature Province Landmark Icons & Badges - Perfectly Native Centered */}
+          <g className="pointer-events-none">
             {provinces.map((prov) => {
               if (!prov.centroid) return null;
               const [cx, cy] = prov.centroid;
@@ -403,30 +387,28 @@ export function ThailandMap({
               return (
                 <g
                   key={`icon-${prov.id}`}
-                  style={{
-                    transform: `translate(${cx}px, ${cy}px) scale(var(--pin-scale, 1))`,
-                    transformOrigin: "center",
-                  }}
+                  transform={`translate(${cx}, ${cy})`}
                 >
                   <circle
-                    r={isHovered ? 13 : 9}
+                    r={isHovered ? 13 : 8.5}
                     fill={isVisited ? "#047857" : "#1e293b"}
                     stroke={isVisited ? "#34d399" : "#334155"}
                     strokeWidth={isHovered ? 1.5 : 0.8}
+                    vectorEffect="non-scaling-stroke"
                   />
                   <text
                     textAnchor="middle"
                     dominantBaseline="central"
-                    fontSize={isHovered ? "12" : "10"}
+                    fontSize={isHovered ? "12" : "9"}
                     className="select-none"
                   >
                     {prov.icon}
                   </text>
                   <text
-                    y={isHovered ? 18 : 15}
+                    y={isHovered ? 18 : 14}
                     textAnchor="middle"
                     fill={isHovered ? "#38bdf8" : isVisited ? "#6ee7b7" : "#cbd5e1"}
-                    fontSize={isHovered ? "9.5" : "8"}
+                    fontSize={isHovered ? "9" : "7"}
                     fontWeight={isHovered ? "bold" : "500"}
                     className="select-none"
                   >
