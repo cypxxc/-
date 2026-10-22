@@ -12,14 +12,13 @@ interface ThailandMapProps {
   onToggleVisited: (provinceId: string) => void;
 }
 
-// Ultra High-Resolution Base Buffer for crisp 4K rendering
 const NATIVE_WIDTH = 2400;
 const NATIVE_HEIGHT = 3600;
-const BASE_RATIO = 0.25; // 600 / 2400 (Default initial scale fitting viewport)
+const BASE_RATIO = 0.25;
 
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 7;
-const LERP = 0.2; // Fluid spring physics factor
+const LERP = 0.2;
 
 export function ThailandMap({
   provinces,
@@ -34,6 +33,7 @@ export function ThailandMap({
   const transformLayerRef = useRef<HTMLDivElement | null>(null);
   const spotlightRef = useRef<HTMLDivElement | null>(null);
   const zoomDisplayRef = useRef<HTMLSpanElement | null>(null);
+  const iconLayerRef = useRef<SVGGElement | null>(null);
 
   // Transform physics state
   const stateRef = useRef({
@@ -76,9 +76,15 @@ export function ThailandMap({
       s.animating = false;
     }
 
-    // Multiply by BASE_RATIO so native 2400x3600 renders crisp at any magnification
     const effectiveScale = s.currentZoomMultiplier * BASE_RATIO;
     transformLayerRef.current.style.transform = `translate3d(${s.currentX}px, ${s.currentY}px, 0) scale(${effectiveScale})`;
+
+    // Dynamically adjust icon scale factor so pins never balloon up when zoomed in
+    // Formula: inverse scale dampened so it stays comfortable and never blocks the province
+    if (iconLayerRef.current) {
+      const invScale = Math.min(1.1, Math.max(0.38, 1 / Math.pow(s.currentZoomMultiplier, 0.72)));
+      iconLayerRef.current.style.setProperty("--pin-scale", invScale.toFixed(3));
+    }
 
     if (zoomDisplayRef.current) {
       zoomDisplayRef.current.textContent = `${Math.round(s.currentZoomMultiplier * 100)}%`;
@@ -119,7 +125,6 @@ export function ThailandMap({
     s.targetY = mouseY - (mouseY - s.targetY) * scaleRatio;
     s.targetZoomMultiplier = newZoom;
 
-    // Bounds clamp
     s.targetX = Math.max(-1200, Math.min(1200, s.targetX));
     s.targetY = Math.max(-1400, Math.min(1400, s.targetY));
 
@@ -140,7 +145,6 @@ export function ThailandMap({
     const clientY = e.clientY;
     const s = stateRef.current;
 
-    // Spotlight cursor update
     if (mouseRafId.current) cancelAnimationFrame(mouseRafId.current);
     mouseRafId.current = requestAnimationFrame(() => {
       if (spotlightRef.current && containerRef.current) {
@@ -194,9 +198,11 @@ export function ThailandMap({
   };
 
   useEffect(() => {
-    // Initial mount scale
     if (transformLayerRef.current) {
       transformLayerRef.current.style.transform = `translate3d(0px, 15px, 0) scale(${BASE_RATIO})`;
+    }
+    if (iconLayerRef.current) {
+      iconLayerRef.current.style.setProperty("--pin-scale", "1");
     }
     return () => {
       if (mouseRafId.current) cancelAnimationFrame(mouseRafId.current);
@@ -315,7 +321,7 @@ export function ThailandMap({
         </span>
       </div>
 
-      {/* Ultra High-Resolution Native SVG (2400 x 3600 High-DPI Buffer) */}
+      {/* Ultra High-Resolution Native SVG Buffer */}
       <div
         ref={transformLayerRef}
         className="w-full h-full flex items-center justify-center origin-center pointer-events-none will-change-transform"
@@ -378,8 +384,8 @@ export function ThailandMap({
             })}
           </g>
 
-          {/* Layer 2: Signature Province Landmark Icons & Badges */}
-          <g className="pointer-events-none">
+          {/* Layer 2: Signature Province Landmark Icons & Badges with Smart CSS Variable Scaling */}
+          <g ref={iconLayerRef} className="pointer-events-none" style={{ "--pin-scale": "1" } as React.CSSProperties}>
             {provinces.map((prov) => {
               if (!prov.centroid) return null;
               const [cx, cy] = prov.centroid;
@@ -389,7 +395,10 @@ export function ThailandMap({
               return (
                 <g
                   key={`icon-${prov.id}`}
-                  transform={`translate(${cx}, ${cy})`}
+                  style={{
+                    transform: `translate(${cx}px, ${cy}px) scale(var(--pin-scale, 1))`,
+                    transformOrigin: "center",
+                  }}
                 >
                   <circle
                     r={isHovered ? 13 : 9}
